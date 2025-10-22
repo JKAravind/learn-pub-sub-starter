@@ -29,6 +29,15 @@ func main() {
 		fmt.Println(err)
 	}
 	fmt.Println("New Channel created")
+	exchange := routing.ExchangePerilDirect
+	routingKey := "game_logs.*"
+	queueName := "game_logs"
+
+	queueCreationChannel, createdQueue, err := pubsub.DeclareAndBind(amqpConn, exchange, queueName, routingKey, pubsub.DurableQueue)
+	if err != nil {
+		fmt.Print(err)
+	}
+	fmt.Print(createdQueue, queueCreationChannel)
 
 	gamelogic.PrintServerHelp()
 

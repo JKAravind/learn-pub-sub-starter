@@ -43,24 +43,31 @@ func main() {
 	}
 	fmt.Print(createdQueue)
 	UserCreatedGameState := gamelogic.NewGameState(userName)
+loop:
 	for {
 		words := gamelogic.GetInput()
-		if words[0] == "spawn" {
+		switch words[0] {
+		case "spawn":
 			err := UserCreatedGameState.CommandSpawn(words)
 			if err != nil {
 				fmt.Print(err)
 			}
-		} else if words[0] == "move" {
+		case "move":
 			_, err := UserCreatedGameState.CommandMove(words)
 			if err != nil {
 				fmt.Println(err)
 			}
 			fmt.Print("Moved Success")
-
+		case "status":
+			UserCreatedGameState.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "quit":
+			gamelogic.PrintQuit()
+			break loop // exits the main loop cleanly
+		default:
+			fmt.Println("Unknown command. Type 'help' for options.")
 		}
-
-		break
-
 	}
 
 	queueCreationChannel.Close()
