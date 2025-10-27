@@ -43,6 +43,17 @@ func main() {
 	}
 	fmt.Print(createdQueue)
 	UserCreatedGameState := gamelogic.NewGameState(userName)
+	// This is For Subscribing the pause Queue
+	handler := handlerPause(UserCreatedGameState)
+	pubsub.SubscribeJSON(amqpConn, exchange, queueName, routingKey, pubsub.TransientQueue, handler)
+
+	//This is for subscribing the Moves Queue
+	armyMovesExchange := routing.ExchangePerilTopic
+	armyMovesRoutingKey := "army_moves.*"
+	armyMovesQueueName := fmt.Sprintf("army_moves.%s", userName)
+	armyMovesHandlerFunction := handerArmyMove(UserCreatedGameState)
+	pubsub.SubscribeJSON(amqpConn, armyMovesExchange, armyMovesQueueName, armyMovesRoutingKey, pubsub.TransientQueue, armyMovesHandlerFunction)
+
 loop:
 	for {
 		words := gamelogic.GetInput()
@@ -53,7 +64,12 @@ loop:
 				fmt.Print(err)
 			}
 		case "move":
-			_, err := UserCreatedGameState.CommandMove(words)
+			armyMove, err := UserCreatedGameState.CommandMove(words)
+			if err != nil {
+				fmt.Println(err)
+			}
+			jsonBodyNeededToBeSentMove := armyMove
+			err = pubsub.PublishJSON(newChannel, armyMovesExchange, armyMovesQueueName, jsonBodyNeededToBeSentMove)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -81,4 +97,19 @@ loop:
 		log.Printf("Error closing connection: %v", err)
 	}
 	fmt.Println("Shutting down gracefully...")
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Println("> ")
+		gs.HandlePause(ps)
+	}
+
+}
+
+func handerArmyMove(gameState *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(armyMove gamelogic.ArmyMove) {
+		defer fmt.Println("> ")
+		gameState.HandleMove(armyMove)
+	}
 }
