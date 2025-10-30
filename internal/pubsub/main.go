@@ -1,7 +1,9 @@
 package pubsub
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 
@@ -12,6 +14,12 @@ type SimpleQueueType int
 
 const TransientQueue SimpleQueueType = 0
 const DurableQueue SimpleQueueType = 1
+
+type AckType int
+
+const Ack AckType = 0
+const NackRequeue AckType = 1
+const NackDiscard AckType = 2
 
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 
@@ -24,6 +32,29 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	msg := amqp.Publishing{
 		ContentType: "application/json",
 		Body:        jsonValSlice,
+	}
+	err = ch.PublishWithContext(ctx, exchange, key, false, false, msg)
+	if err != nil {
+		fmt.Print(err)
+		return err
+	}
+	return nil
+}
+
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+
+	var buf bytes.Buffer
+	Encoder := gob.NewEncoder(&buf)
+	err := Encoder.Encode(val)
+
+	if err != nil {
+		fmt.Print(err)
+		return err
+	}
+	ctx := context.Background()
+	msg := amqp.Publishing{
+		ContentType: "application/gob",
+		Body:        buf.Bytes(),
 	}
 	err = ch.PublishWithContext(ctx, exchange, key, false, false, msg)
 	if err != nil {
@@ -56,12 +87,18 @@ func DeclareAndBind(
 		autoDelete = true
 		exclusive = true
 	}
-	newQueue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, noWait, nil)
+	q, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, noWait, nil)
 	if err != nil {
-		fmt.Print(err)
+		ch.Close()
+		return nil, amqp.Queue{}, fmt.Errorf("queue declare %s: %w", queueName, err)
 	}
-	ch.QueueBind(queueName, key, exchange, noWait, nil)
-	return ch, newQueue, nil
+
+	if err := ch.QueueBind(queueName, key, exchange, noWait, nil); err != nil {
+		ch.Close()
+		return nil, amqp.Queue{}, fmt.Errorf("queue bind %s -> %s: %w", queueName, key, err)
+	}
+
+	return ch, q, nil
 }
 
 func SubscribeJSON[T any](
@@ -70,11 +107,13 @@ func SubscribeJSON[T any](
 	queueName,
 	key string,
 	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
-	handler func(T),
+	handler func(T) AckType,
 ) error {
 
-	QueueBindChannel, _, _ := DeclareAndBind(conn, exchange, queueName, key, queueType)
-
+	QueueBindChannel, _, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return fmt.Errorf("DeclareAndBind failed: %w", err)
+	}
 	QueueMessagesChannel, err := QueueBindChannel.Consume(queueName, "", false, false, false, false, nil)
 	if err != nil {
 		fmt.Print(err)
@@ -88,10 +127,18 @@ func SubscribeJSON[T any](
 				fmt.Print(err)
 				continue
 			}
-			handler(unMarsheledData)
-			err = message.Ack(false)
-			if err != nil {
-				fmt.Print(err)
+			ackType := handler(unMarsheledData)
+			switch ackType {
+			case Ack:
+				message.Ack(false)
+				fmt.Println("Ack is triggered Succes consumed")
+			case NackRequeue:
+				message.Nack(false, true)
+				fmt.Println("NAck is triggered Succes Requeu")
+			case NackDiscard:
+				message.Nack(false, false)
+				fmt.Println("NAck is triggered Succes Discarded")
+
 			}
 
 		}
